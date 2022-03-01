@@ -9,9 +9,9 @@ parsed_2 <-fParseTrackingDataBothTeams('C:/SoccerData',2)
 #################################
 #EPV import and rastering
 #import EPV values from csv,adding colnames
-epv_cols <-seq(from = 0,to = 120,length.out = 50)
+#epv_cols <-seq(from = 0,to = 120,length.out = 50)
 #get home and away team values (reversing for away)
-home_EPV <-read.csv("EPV.csv", col.names = epv_cols)
+home_EPV <-read.csv("EPV.csv", header=F)
 away_EPV <- rev(home_EPV)
 
 rasterisedhome <-data.frame(matrix(,nrow = 32*50,ncol = 3))
@@ -26,8 +26,8 @@ for(i in 1:nrow(home_EPV) ){
     rasterisedhome[z1,] <-addtoraster
     z1<-z1+1
   }}
-
-colnames(rasterisedhome)<-c("values", "x","y")
+rasterisedhome <- rasterisedhome[,c(3,2,1)]
+colnames(rasterisedhome)<-c("y", "x","values")
 EPV_raster_home <- raster::rasterFromXYZ(rasterisedhome)
 z1 <-1
 for(i in 1:nrow(away_EPV) ){
@@ -36,8 +36,8 @@ for(i in 1:nrow(away_EPV) ){
     rasterisedaway[z1,] <-addtoraster
     z1<-z1+1
   }}
-
-colnames(rasterisedaway)<-c("values", "x","y")
+rasterisedaway <- rasterisedaway[,c(3,2,1)]
+colnames(rasterisedaway)<-c("y", "x","values")
 EPV_raster_away <- raster::rasterFromXYZ(rasterisedaway)
 #EPV Finished
 #############################################
@@ -105,17 +105,21 @@ for(i in 1:10){
     }   else 
       {this_EPV <- EPV_raster_away
       }
+    #resample this_EPV raster to get it on same extent as PV rasters
+    this_EPV <- raster::resample(this_EPV,all_PV_raster)
     #get diff in PV
     #need to add EPV raster to calc
-    PV_Diff <- all_PV_raster - without_this_player_PV_raster
+    PV_with <- raster::overlay(all_PV_raster, this_EPV, fun=function(x,y){return(x*y)})
+    PV_without <-raster::overlay(without_this_player_PV_raster, this_EPV, fun=function(x,y){return(x*y)})
     #resampled_PV_Diff <-resample(PV_Diff, this_EPV)
-    Value_Added<- PV_Diff * this_EPV
+    Value_Added<- cellStats(PV_with,sum) - cellStats(PV_without,sum)
     #append to list
-    PV_list<- append(PV_list, added_value)
+    PV_list<- append(PV_list, Value_Added)
       }
  
 }
-res(PV_Diff)
-res(this_EPV)
-try1 <-raster::aggregate(this_EPV, fact = res(all_PV_raster))
-try1*all_PV_raster
+
+
+
+extent(this_EPV)
+this_EPV* all_PV_raster
