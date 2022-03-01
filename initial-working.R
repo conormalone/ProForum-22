@@ -52,7 +52,8 @@ EPV_raster_away <- raster::rasterFromXYZ(rasterisedaway)
 #go through all events and get
 #team, game, player, speed, value of change (PV x EPV), attack or def, time/frame
 
-PV_list <-list()
+PV_list <-data.frame(matrix(,,ncol = 7))
+colnames(PV_list) <-c("this_frame", "this_period", "Player", "Tag", "Velocity", "Value_Added", "attacking_team")
 for(i in 1:10){
   #subset tracking to just the "i"th frame
   this_frame_tracking <-parsed_1
@@ -111,15 +112,11 @@ for(i in 1:10){
     #need to add EPV raster to calc
     PV_with <- raster::overlay(all_PV_raster, this_EPV, fun=function(x,y){return(x*y)})
     PV_without <-raster::overlay(without_this_player_PV_raster, this_EPV, fun=function(x,y){return(x*y)})
-    #resampled_PV_Diff <-resample(PV_Diff, this_EPV)
-    Value_Added<- cellStats(PV_with,sum) - cellStats(PV_without,sum)
+    #subtract sum of PVxEPV_without raster from PVxEPV_with raster
+    Value_Added<- raster::cellStats(PV_with,sum) - raster::cellStats(PV_without,sum)
+    to_add <- cbind(this_frame, this_period, this_player, this_team, this_velo, Value_Added,attacking_team)
     #append to list
-    PV_list<- append(PV_list, Value_Added)
+    PV_list<- rbind(PV_list, to_add)
       }
  
 }
-
-
-
-extent(this_EPV)
-this_EPV* all_PV_raster
