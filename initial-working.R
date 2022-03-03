@@ -47,21 +47,32 @@ EPV_raster_away <- raster::rasterFromXYZ(rasterisedaway)
 #first_half %>% group_by(Player, Tag) %>%  summarize(X=mean(X), Y = mean(Y)) %>% 
 #ggplot( aes(X,Y,col=Tag))+geom_point()
 
-
+#put every pass' start and end frame in a list so the player in poss isn't assessed
+#(if you have the ball it's assumed you're moving efficiently and you aren't second guessed)
+player_in_poss_df <- parsed_1$dtEventsData %>% dplyr::filter(Type == "PASS") %>% 
+  dplyr::select(c("StartFrame", "EndFrame", "From"))
+player_in_poss_df$player_in_poss_seq <- apply(player_in_poss_df,1, function(x) seq(x["StartFrame"], x["EndFrame"]))
+player_in_poss_list <- player_in_poss_df %>% 
+  unnest(player_in_poss_seq) %>% 
+  dplyr::select("player_in_poss_seq", "From")  %>%  
+  distinct(player_in_poss_seq, .keep_all = TRUE)
 
 #go through all events and get
 #team, game, player, speed, value of change (PV x EPV), attack or def, time/frame
 
 PV_list <-data.frame(matrix(,,ncol = 7))
 colnames(PV_list) <-c("this_frame", "this_period", "Player", "Tag", "Velocity", "Value_Added", "attacking_team")
-for(i in 1:10){
+#set Frame as factor
+frame_levels <-levels(as.factor(parsed_1$dtTrackingData$Frame))
+for(i in 1:length(frame_levels)){
+  this_frame <- frame_levels[i]
   #subset tracking to just the "i"th frame
   this_frame_tracking <-parsed_1
-  this_frame_tracking$dtTrackingData <- this_frame_tracking$dtTrackingData %>% dplyr::filter(Frame == i)
+  this_frame_tracking$dtTrackingData <- this_frame_tracking$dtTrackingData %>% dplyr::filter(Frame == this_frame)
   #get all player PV for this frame 
   all_PV_output <- fGetPitchControlProbabilities (
     lData = this_frame_tracking,
-    viTrackingFrame = i,
+    viTrackingFrame = as.integer(this_frame),
     iGridCellsX = 120 / 3
   )
   #put this PV into raster format
@@ -69,11 +80,14 @@ for(i in 1:10){
     dplyr::mutate(y = TargetY, x = TargetX, values = AttackProbability)%>%
     dplyr::select(c("y", "x", "values")) 
   all_PV_raster <- raster::rasterFromXYZ(all_PV_raster_format)
-  #get just active players in this frame
-  this_frame_player_list <- this_frame_tracking$dtTrackingData %>% dplyr::filter(Tag !="B") %>% 
+  #isolate the player in possession this frame
+  this_player_in_poss <- player_in_poss_list %>% dplyr::filter(player_in_poss_seq == this_frame) %>% dplyr::select("From")
+  this_player_in_poss <- ifelse(nrow(this_player_in_poss)==0, 100,this_player_in_poss)
+  #get just active players in this frame (leave out ball and player in possession)
+  this_frame_player_list <- this_frame_tracking$dtTrackingData %>% dplyr::filter(Tag !="B" && Player != this_player_in_poss$From) %>% 
     dplyr::select("Player")
   #frame details that don't need to be looped
-  this_frame <- i
+  this_frame <- this_frame
   this_period <-this_frame_tracking$dtTrackingData$Period[1]
   attacking_team <- all_PV_output$dtTrackingSlice$AttackingTeam[1]
   #isolate frame to loop through players and get control for each one
@@ -91,7 +105,7 @@ for(i in 1:10){
     #do PV calc
     without_this_player_PV <- fGetPitchControlProbabilities (
       lData = without_this_player_tracking,
-      viTrackingFrame = i,
+      viTrackingFrame = as.integer(this_frame),
       iGridCellsX = 120 / 3
     )
     #put PV in raster format then rasterize
@@ -120,3 +134,4 @@ for(i in 1:10){
       }
  
 }
+
