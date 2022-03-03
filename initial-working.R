@@ -2,6 +2,9 @@ library(tidyverse)
 library(gganimate)
 library(CodaBonito)
 library(raster)
+library(doParallel)
+library(foreach)
+library(parallel)
 #import full games
 parsed_1 <-fParseTrackingDataBothTeams('C:/SoccerData',1)
 parsed_2 <-fParseTrackingDataBothTeams('C:/SoccerData',2)
@@ -64,22 +67,47 @@ PV_list <-data.frame(matrix(,,ncol = 7))
 colnames(PV_list) <-c("this_frame", "this_period", "Player", "Tag", "Velocity", "Value_Added", "attacking_team")
 #set Frame as factor
 frame_levels <-levels(as.factor(parsed_1$dtTrackingData$Frame))
-for(i in 1:length(frame_levels)){
+#lets parallelize this thing
+#from https://www.blasbenito.com/post/02_parallelizing_loops_with_r/
+my.cluster <- parallel::makeCluster(
+  11, 
+  type = "PSOCK"
+)
+
+#check cluster definition (optional)
+print(my.cluster)
+## socket cluster with 7 nodes on host 'localhost'
+#register it to be used by %dopar%
+doParallel::registerDoParallel(cl = my.cluster)
+
+
+
+ 
+  ###############################new paralellized version
+  all_PV_output <- foreach(
+    i = 1:10, 
+    .combine = 'rbind'
+  ) %dopar% {
+    CodaBonito::fGetPitchControlProbabilities(
+    lData = parsed_1,
+    viTrackingFrame = i,
+    iGridCellsX = 120 / 3
+    )}
+########################################  
+  for(i in 1:length(frame_levels)){ 
   this_frame <- frame_levels[i]
   #subset tracking to just the "i"th frame
   this_frame_tracking <-parsed_1
   this_frame_tracking$dtTrackingData <- this_frame_tracking$dtTrackingData %>% dplyr::filter(Frame == this_frame)
-  #get all player PV for this frame 
-  all_PV_output <- fGetPitchControlProbabilities (
-    lData = this_frame_tracking,
-    viTrackingFrame = as.integer(this_frame),
-    iGridCellsX = 120 / 3
-  )
+  #get all player PV for this frame  
   #put this PV into raster format
-  all_PV_raster_format <-all_PV_output$dtDetails %>% 
+  ###########################paralellised version(hopefully works)
+  all_PV_raster_format <-all_PV_output[[length(frame_levels)+i]] %>% 
     dplyr::mutate(y = TargetY, x = TargetX, values = AttackProbability)%>%
     dplyr::select(c("y", "x", "values")) 
   all_PV_raster <- raster::rasterFromXYZ(all_PV_raster_format)
+ ################################ 
+  
   #isolate the player in possession this frame
   this_player_in_poss <- player_in_poss_list %>% dplyr::filter(player_in_poss_seq == this_frame) %>% dplyr::select("From")
   this_player_in_poss <- ifelse(nrow(this_player_in_poss)==0, 100,this_player_in_poss)
@@ -91,6 +119,8 @@ for(i in 1:length(frame_levels)){
   this_period <-this_frame_tracking$dtTrackingData$Period[1]
   attacking_team <- all_PV_output$dtTrackingSlice$AttackingTeam[1]
   #isolate frame to loop through players and get control for each one
+  
+  ########################parallelize next
   for(j in 1:nrow(this_frame_player_list)){
     #get player details
     this_player_event <- this_frame_tracking$dtTrackingData %>% dplyr::filter(Player == this_frame_player_list[j]$Player)
@@ -118,8 +148,8 @@ for(i in 1:length(frame_levels)){
     #get correct EPV
     if(attacking_team =="H"){this_EPV <- EPV_raster_home
     }   else 
-      {this_EPV <- EPV_raster_away
-      }
+    {this_EPV <- EPV_raster_away
+    }
     #resample this_EPV raster to get it on same extent as PV rasters
     this_EPV <- raster::resample(this_EPV,all_PV_raster)
     #get diff in PV
@@ -131,7 +161,8 @@ for(i in 1:length(frame_levels)){
     to_add <- cbind(this_frame, this_period, this_player, this_team, this_velo, Value_Added,attacking_team)
     #append to list
     PV_list<- rbind(PV_list, to_add)
-      }
- 
+  }
+  
 }
+
 
