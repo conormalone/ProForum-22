@@ -84,8 +84,8 @@ doParallel::registerDoParallel(cl = my.cluster)
 
  
   ###############################new paralellized version
-  all_PV_output <- foreach(
-    i = 1:10, 
+  all_PV_output <- foreach::foreach(
+    i = 1:length(frame_levels), 
     .combine = 'rbind'
   ) %dopar% {
     CodaBonito::fGetPitchControlProbabilities(
@@ -112,12 +112,12 @@ doParallel::registerDoParallel(cl = my.cluster)
   this_player_in_poss <- player_in_poss_list %>% dplyr::filter(player_in_poss_seq == this_frame) %>% dplyr::select("From")
   this_player_in_poss <- ifelse(nrow(this_player_in_poss)==0, 100,this_player_in_poss)
   #get just active players in this frame (leave out ball and player in possession)
-  this_frame_player_list <- this_frame_tracking$dtTrackingData %>% dplyr::filter(Tag !="B" && Player != this_player_in_poss$From) %>% 
+  this_frame_player_list <- this_frame_tracking$dtTrackingData %>% dplyr::filter(Tag !="B"  &  Player != this_player_in_poss[[1]]) %>% 
     dplyr::select("Player")
   #frame details that don't need to be looped
   this_frame <- this_frame
   this_period <-this_frame_tracking$dtTrackingData$Period[1]
-  attacking_team <- all_PV_output$dtTrackingSlice$AttackingTeam[1]
+  attacking_team <- all_PV_output[[i]]$AttackingTeam[1]
   #isolate frame to loop through players and get control for each one
   
   ########################parallelize next
@@ -128,22 +128,32 @@ doParallel::registerDoParallel(cl = my.cluster)
     this_team <-this_player_event %>% dplyr::select("Tag")
     this_velo <- this_player_event %>% dplyr::select("Velocity")
     #get pitch control without this_player
-    #remove from data
-    without_this_player_tracking <- this_frame_tracking
-    without_this_player_tracking$dtTrackingData <- without_this_player_tracking$dtTrackingData %>% 
-      dplyr::filter(Player != this_player$Player[1])
-    #do PV calc
-    without_this_player_PV <- fGetPitchControlProbabilities (
-      lData = without_this_player_tracking,
-      viTrackingFrame = as.integer(this_frame),
-      iGridCellsX = 120 / 3
-    )
-    #put PV in raster format then rasterize
-    without_this_player_PV_raster_format <-without_this_player_PV$dtDetail %>% 
+    #first attempt at parallelizing
+    without_this_player_tracking[[j]] <- this_frame_tracking
+    without_this_player_tracking[[j]]$dtTrackingData <- this_frame_tracking$dtTrackingData %>% 
+      dplyr::filter(Player != this_player$Player)
+  } 
+    #######parallelised PV Calc
+    without_this_player_PV <- foreach::foreach(
+      j = 1:nrow(this_frame_player_list), 
+      .combine = 'rbind'
+    ) %dopar% {
+      CodaBonito::fGetPitchControlProbabilities(
+        lData = without_this_player_tracking[j][[1]],
+        viTrackingFrame = i,
+        iGridCellsX = 120 / 3
+      )}
+    #########################
+#second j loop, hopefully more efficient    
+for(j in 1:nrow(this_frame_player_list)){    
+    #put PV in raster arrangement 
+  without_this_player_PV_raster_format <-list()
+    without_this_player_PV_raster_format[[j]] <-without_this_player_PV[[nrow(this_frame_player_list)+j]] %>% 
       dplyr::mutate(y = TargetY, x = TargetX, values = AttackProbability)%>%
       dplyr::select(c("y", "x", "values")) 
-    
-    without_this_player_PV_raster <- raster::rasterFromXYZ(without_this_player_PV_raster_format)
+    #then rasterize it (change to raster format)
+    without_this_player_PV_raster<-list()
+    without_this_player_PV_raster[[j]] <- raster::rasterFromXYZ(without_this_player_PV_raster_format[[j]])
     
     #get correct EPV
     if(attacking_team =="H"){this_EPV <- EPV_raster_home
@@ -155,7 +165,7 @@ doParallel::registerDoParallel(cl = my.cluster)
     #get diff in PV
     #need to add EPV raster to calc
     PV_with <- raster::overlay(all_PV_raster, this_EPV, fun=function(x,y){return(x*y)})
-    PV_without <-raster::overlay(without_this_player_PV_raster, this_EPV, fun=function(x,y){return(x*y)})
+    PV_without <-raster::overlay(without_this_player_PV_raster[[j]], this_EPV, fun=function(x,y){return(x*y)})
     #subtract sum of PVxEPV_without raster from PVxEPV_with raster
     Value_Added<- raster::cellStats(PV_with,sum) - raster::cellStats(PV_without,sum)
     to_add <- cbind(this_frame, this_period, this_player, this_team, this_velo, Value_Added,attacking_team)
