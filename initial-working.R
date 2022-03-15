@@ -82,10 +82,10 @@ doParallel::registerDoParallel(cl = my.cluster)
 
 
 
- 
-  ###############################new paralellized version
+ library(tictoc)
+tictoc::tic("par_with_rbind")
   all_PV_output <- foreach::foreach(
-    i = 1:length(frame_levels), 
+    i = 1:15, 
     .combine = 'rbind'
   ) %dopar% {
     CodaBonito::fGetPitchControlProbabilities(
@@ -93,6 +93,14 @@ doParallel::registerDoParallel(cl = my.cluster)
     viTrackingFrame = i,
     iGridCellsX = 120 / 3
     )}
+  tictoc::toc()
+  
+  
+  
+  library(reticulate)
+  source_python("Metrica_PitchControl.py")
+  source_python("pythontry.py")
+  py$generate_pitch_control_for_event(1,)
 ########################################  
   for(i in 1:length(frame_levels)){ 
   this_frame <- frame_levels[i]
